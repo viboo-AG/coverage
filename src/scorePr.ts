@@ -8,34 +8,58 @@ import {octokit} from './client'
 const TITLE = `# ☂️ Python Coverage`
 
 export async function publishMessage(pr: number, message: string): Promise<void> {
+  core.info(`Publishing message`)
+  core.info(`Preparing to publish message to PR #${pr} in ${context.repo.owner}/${context.repo.repo}`)
   const body = TITLE.concat(message)
   core.summary.addRaw(body).write()
 
-  const comments = await octokit.rest.issues.listComments({
-    ...context.repo,
-    issue_number: pr
-  })
-  const exist = comments.data.find(commnet => {
-    return commnet.body?.startsWith(TITLE)
-  })
+  try {
+    core.info(`Attempting to list comments for PR #${pr} in ${context.repo.owner}/${context.repo.repo}`)
+    const comments = await octokit.rest.issues.listComments({
+      ...context.repo,
+      issue_number: pr
+    })
+    core.info(`Successfully retrieved ${comments.data.length} comments`)
 
-  if (exist) {
-    await octokit.rest.issues.updateComment({
-      ...context.repo,
-      issue_number: pr,
-      comment_id: exist.id,
-      body
+    const exist = comments.data.find((comment: (typeof comments.data)[number]) => {
+      return comment.body?.startsWith(TITLE)
     })
-  } else {
-    await octokit.rest.issues.createComment({
-      ...context.repo,
-      issue_number: pr,
-      body
-    })
+
+    if (exist) {
+      core.info(`Found existing comment (ID: ${exist.id}), attempting to update`)
+      await octokit.rest.issues.updateComment({
+        ...context.repo,
+        issue_number: pr,
+        comment_id: exist.id,
+        body
+      })
+      core.info('Successfully updated comment')
+    } else {
+      core.info('No existing comment found, attempting to create new comment')
+      await octokit.rest.issues.createComment({
+        ...context.repo,
+        issue_number: pr,
+        body
+      })
+      core.info('Successfully created comment')
+    }
+  } catch (error) {
+    core.error(`Failed to publish comment: ${error}`)
+    if (error instanceof Error) {
+      core.error(`Error name: ${error.name}`)
+      core.error(`Error message: ${error.message}`)
+      core.error(`Error stack: ${error.stack}`)
+    }
+    // Log context info for debugging
+    core.info(`Context repo: ${JSON.stringify(context.repo)}`)
+    core.info(`PR number: ${pr}`)
+    core.info(`Event name: ${context.eventName}`)
+    throw error
   }
 }
 
-export function scorePr(filesCover: FilesCoverage): boolean {
+export async function scorePr(filesCover: FilesCoverage): Promise<boolean> {
+  core.info('Scoring PR based on coverage data')
   let message = ''
   let passOverall = true
 
@@ -65,12 +89,25 @@ export function scorePr(filesCover: FilesCoverage): boolean {
     message = message.concat(`\n## Modified Files\nNo covered modified files...`)
     core.info('No covered modified files in this PR ')
   }
-  const sha = context.payload.pull_request?.head.sha.slice(0, 7)
-  const action = '[action](https://github.com/marketplace/actions/python-coverage)'
-  message = message.concat(`\n\n\n> **updated for commit: \`${sha}\` by ${action}🐍**`)
-  message = `\n> current status: ${passOverall ? '✅' : '❌'}`.concat(message)
-  publishMessage(context.issue.number, message)
-  core.endGroup()
+  try {
+    core.info('Attempting to publish results message')
+    const sha = context.payload.pull_request?.head.sha.slice(0, 7)
+    core.info(`Current commit SHA: ${sha}`)
+    const action = '[action](https://github.com/marketplace/actions/python-coverage)'
+    message = message.concat(`\n\n\n> **updated for commit: \`${sha}\` by ${action}🐍**`)
+    message = `\n> current status: ${passOverall ? '✅' : '❌'}`.concat(message)
+    core.info(`Publishing message: ${message}`)
+    await publishMessage(context.issue.number, message)
+    core.endGroup()
+  } catch (error) {
+    core.error(`Failed to publish message: ${error}`)
+    if (error instanceof Error) {
+      core.error(`Error name: ${error.name}`)
+      core.error(`Error message: ${error.message}`)
+      core.error(`Error stack: ${error.stack}`)
+    }
+    throw error
+  }
 
   return passOverall
 }
